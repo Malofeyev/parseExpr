@@ -42,7 +42,7 @@ parseXml tag parser = string ("<" ++ tag ++ ">") *> parser <* string ("</" ++ ta
 exp' :: Double
 exp' = 0.00001
 interpret :: AExpr a -> Map.Map String Double -> Maybe a
-interpret (AENum e) _= Just e
+interpret (AENum e) _ = Just e
 interpret (AEVar e) ma = Map.lookup e ma
 interpret (AESqrt e) ma = sqrt <$> interpret e ma
 interpret (AESum e1 e2) ma = Apply.liftA2 (+) (interpret e1 ma) (interpret e2 ma)
@@ -52,6 +52,7 @@ interpret (AEDiv e1 e2) ma= Apply.liftA2 (/) (interpret e1 ma) (interpret e2 ma)
 interpret (AEEq e1 e2) ma= fmap (\s -> abs(s) < exp') $ Apply.liftA2 (-) (interpret e1 ma) (interpret e2 ma) 
 interpret (AEExp e1 e2) ma= Apply.liftA2 (**) (interpret e1 ma) (interpret e2 ma)
 interpret (AEFrac e1 e2) ma= Apply.liftA2 (/) (interpret e1 ma) (interpret e2 ma)
+interpret (Minus e1) ma = (*(-1)) <$> interpret e1 ma
 
 heading = "<mathxmlns=\'http://www.w3.org/1998/Math/MathML\'>"
 
@@ -65,11 +66,11 @@ parseVar =  AEVar <$> parseXml "mi" ((:[]) <$> letter)
 
 parseSign = \s -> parseXml "mo" $ ((:[]) <$> char s)
 
-parseLeftAssociative :: Parser (AExpr Double) -> [Parser String] -> Parser (AExpr Double)
-parseLeftAssociative parseAtom parseOp = 
+parseLeftAssociative :: Parser (AExpr Double) -> Parser (AExpr Double) -> [Parser String] -> Parser (AExpr Double)
+parseLeftAssociative parseAtom parseAtom' parseOp = 
             do
                 atom <- parseAtom
-                ((try $ parseTail parseAtom atom parseOp) <|> pure atom)
+                ((try $ parseTail parseAtom' atom parseOp) <|> pure atom)
            where 
             parseTail :: Parser (AExpr Double) -> (AExpr Double) -> [Parser String] -> Parser (AExpr Double)
             parseTail parseAtom atom1 listP = 
@@ -83,9 +84,9 @@ parseLeftAssociative parseAtom parseOp =
                                 "/" -> AEDiv
                     ((try $ parseTail parseAtom (op atom1 atom2) listP) <|> pure (op atom1 atom2))
 parseSum :: Parser (AExpr Double)                    
-parseSum = parseLeftAssociative parseProduct [try $ parseSign '+', parseSign '-']
+parseSum = parseLeftAssociative parseProduct parseProduct [try $ parseSign '+', parseSign '-']
 parseProduct :: Parser (AExpr Double)  
-parseProduct = parseLeftAssociative parseAtom [try $ string "&#x00D7;<!--multiplicationsign-->" >> pure "*", try $ parseSign '/', (lookAhead parseAtom >> pure "*")]
+parseProduct = parseLeftAssociative parseAtom parseAtom' [try $ string "&#x00D7;<!--multiplicationsign-->" >> pure "*", try $ parseSign '/', (lookAhead parseAtom >> pure "*")]
 
 parseExpon = do
                 string "<msup>"
@@ -110,9 +111,9 @@ parseFrac = do
                 string "</mrow>"
                 string "</mfrac>"
                 return $ AEFrac exp1 exp2
-parseMinus = Minus <$> (parseSign '-' >> parseAtom)
+parseMinus = Minus <$> (parseSign '-' >> parseAtom')
 parseAtom = (try $ parseSqrt) <|> (try $ parseBrackets) <|> (try $ parseFrac) <|> (try $ parseExpon) <|> (try $ parseVar) <|> (try parseMinus) <|> (parseNum)    
-
+parseAtom' = (try $ parseSqrt) <|> (try $ parseBrackets) <|> (try $ parseFrac) <|> (try $ parseExpon) <|> (try $ parseVar) <|> (parseNum)
 parseExpr :: Parser (AExpr Bool)
 parseExpr = do
                 expr1 <- parseSum
@@ -146,12 +147,17 @@ check :: Either ParseError [AExpr Bool] -> String
 check eith = either (\_ -> "ParseError") (check') eith
              where
                 pred (AEEq (AEVar _) (AENum _)) = True
+                pred (AEEq (AEVar _) (Minus (AENum _))) = True
                 pred _                         = False
+                func :: AExpr Bool -> (String, Double)
+                func (AEEq (AEVar a) (AENum b)) = (a, b)
+                func (AEEq (AEVar a) (Minus (AENum b))) = (a, -1 * b)
+                
                 check' :: [AExpr Bool] -> String
                 check' list = let
                                (ans, expr) = partition pred list
-                               ma = Map.fromList $ map (\(AEEq (AEVar a) (AENum b)) -> (a,b)) ans 
-                               res = sequenceA (map (\e -> interpret e ma) expr) >>= \mas -> if (all id mas) then Just "Rigth answer" else Just "Incorrect answer"
+                               ma = Map.fromList $ map (func) ans 
+                               res = sequenceA (map (\e -> interpret e ma) expr) >>= \mas -> if (all id mas) then Just "Rigth answer" else Just $ show (ans, expr)
                               in Data.Maybe.fromMaybe "missing answer for variable" res
                 
 main :: IO ()
