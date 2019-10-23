@@ -157,7 +157,7 @@ check eith = either (\_ -> "ParseError") (check') eith
                 check' list = let
                                (ans, expr) = partition pred list
                                ma = Map.fromList $ map (func) ans 
-                               res = sequenceA (map (\e -> interpret e ma) expr) >>= \mas -> if (all id mas) then Just "Rigth answer" else Just $ show (ans, expr)
+                               res = sequenceA (map (\e -> interpret e ma) expr) >>= \mas -> if (all id mas) then Just "Rigth answer" else Just "incorrect answer"
                               in Data.Maybe.fromMaybe "missing answer for variable" res
                 
 main :: IO ()
